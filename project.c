@@ -6,7 +6,6 @@
 /* Global Access token. Naughty Naughty Naughty */
 char *access_token_GLOBAL = "288688992.1fb234f.b71d32601a6746cb9809590d6b53b181";
 int num_urls_GLOBAL = 0;
-char *pagination_url_GLOBAL = NULL;
 char **url_array_GLOBAL = NULL;
 int url_array_size_GLOBAL = 0;
 
@@ -33,23 +32,25 @@ void usage() {
 }
 
 /* Prototypes go here */
-char** get_urls(char *user_id, int max_pics);
-char** get_urls_from_JSON(int pipefd[2]);
+int get_number_of_pics(char *user_id);
+int* get_number_pics_from_JSON(int pipefd[2]);
+void get_urls(char *user_id, int max_pics);
+char* get_urls_from_JSON(int pipefd[2]);
 char** get_id_and_pic_from_name(char *user_name);
-char* get_user_pic_from_JSON(int pipefd[2]);
 char* get_user_id_from_JSON(int pipefd[2]);
+char* get_user_pic_from_JSON(int pipefd[2]);
 void* fork_stuff(char *curl_command[], void* (*do_stuff)(int pipefd[2]));
 char* remove_all_char(char *str, char c);
 void init_pipe(int pipefd[2]);
 void unix_error(char *msg);
 void dump_pipe_to_stdout(int pipefd[2]);
 void addStringToArray(char *string, int loc, char ***array, int *array_size);
+void addStringToArray(char *string, int loc, char ***array, int *array_size);
 char* str_replace(char *orig, char *rep, char *with);
-int get_number_of_pics(char *user_id);
-int get_number_pics_from_JSON(int pipefd[2]);
 
 /* Begin Main Program */
 int main(int argc, char *argv[]) {
+	int i;
 
 	/* Check to make sure that the program was started with at least one argument for the username */
 	if (argc < 2) {
@@ -78,16 +79,15 @@ int main(int argc, char *argv[]) {
 	int pics_to_download = get_number_of_pics(user_id);
 	printf("Number of pics:%d\n", pics_to_download);
 
-	/* Get the array of URL's */
-	char **urls = get_urls(user_id, pics_to_download);
+	/* Get the array of URL's into the global array of urls */
+	get_urls(user_id, pics_to_download);
 
 	/* Download the images  */
-	int i;
     pid_t url_pid[num_urls_GLOBAL];
 	#pragma omp parrallel for
     for (i = 0; i < num_urls_GLOBAL; i++) {
         if((url_pid[i] = fork()) == 0) {
-            execlp("wget", "wget", "-P", "downloads/", urls[i], NULL);
+            execlp("wget", "wget", "-P", "downloads/", url_array_GLOBAL[i], NULL);
         }
         else {
             waitpid(url_pid[i], NULL, 0);
@@ -99,12 +99,12 @@ int main(int argc, char *argv[]) {
 
 	/* Deallocate the array of strings containing the urls */
 	for (i = 0; i < num_urls_GLOBAL; i++) {
-		free( urls[i] );
+		free( url_array_GLOBAL[i] );
 	}
-	free(urls);
+	free(url_array_GLOBAL);
 
 	printf("Number of Images downloaded : %d\n", num_urls_GLOBAL);
-	printf("\nBye Bye.\n");
+	printf("Bye Bye.\n");
 }
 
 int get_number_of_pics(char *user_id) {
@@ -123,12 +123,16 @@ int get_number_of_pics(char *user_id) {
 	char *curl_command[] = { "curl", "--silent", url, NULL };
 
 	/* Execute the curl command and get the number of user media from the JSON */
-	int pics_to_download = fork_stuff(curl_command, (void*) get_number_pics_from_JSON);
+	int *pics_to_download = fork_stuff(curl_command, (void*) get_number_pics_from_JSON);
 
-	return pics_to_download;
+	/* Free the dynamically allocate integer */
+	int rv = *pics_to_download;
+	free(pics_to_download);
+
+	return rv;
 }
 
-int get_number_pics_from_JSON(int pipefd[2]) {
+int* get_number_pics_from_JSON(int pipefd[2]) {
 
 	/* Open the pipe for reading */
 	FILE *f = fdopen(pipefd[READ], "r");
@@ -146,14 +150,15 @@ int get_number_pics_from_JSON(int pipefd[2]) {
 			char *start = loc + strlen(key);
 
 			/* Find the ending position of the key value */
-			char *end = strstr(start, ",");
+			char *end = strchr(start, ',');
 
 			/* Null terminate the string */
 			*end = '\0';
 
 			/* Return the string */
-			int lolol = atoi(start);
-			return lolol;
+			int *temp = malloc(sizeof(int));
+			*temp = atoi(start);
+			return temp;
 		}
 	}
 
@@ -165,8 +170,8 @@ int get_number_pics_from_JSON(int pipefd[2]) {
 /**
  * LOL
  */
-char** get_urls(char *user_id, int max_pics) {
-	/* Build the URI for he following command: curl "https://api.instagram.com/v1/users/3/media/recent/?access_token=288688992.1fb234f.b71d32601a6746cb9809590d6b53181" */
+void get_urls(char *user_id, int max_pics) {
+	/* Build the URI for he following command: curl "https://api.instagram.com/v1/users/3/media/recent/?access_token=288688992.1fb234f.b71d32601a6746cb9809590d6b53b181" */
 	char *request_part1 = "https://api.instagram.com/v1/users/";
 	char *request_part2 = "/media/recent/?access_token=";
 
@@ -180,74 +185,83 @@ char** get_urls(char *user_id, int max_pics) {
 	/* If max pics is greater than 200 use 200 */
 	if (max_pics > 200)	max_pics = 200;
 
-	char **rv;
+	int NUM_URLS_PER_PAGE = 35;
 	do {
 		/* Create a curl command argument vector to be used for execv */
 		char *curl_command[] = { "curl", "--silent", url, NULL };
 
-		/* Execute the curl command, get back an array of strings containing the url's of the instagram picture feed */
-		rv = fork_stuff(curl_command, (void*) get_urls_from_JSON);
-
 		/* Free the dynamically allocated url string */
 		free(url);
-		url = NULL;
 
-		/* Assign the global url for the next_page of images into url */
-		url = pagination_url_GLOBAL;
-		pagination_url_GLOBAL = NULL;
+		/* Execute the curl command, get back the url of the next page of JSON or NULL if no more  */
+		url = fork_stuff(curl_command, (void*) get_urls_from_JSON);
 
 		printf("Number of urls found: %d\n", num_urls_GLOBAL);
 
-	} while ( !(num_urls_GLOBAL > max_pics) );
-
-	/* Return the array of strings */
-	return rv;
+	} while ( url != NULL && (num_urls_GLOBAL + NUM_URLS_PER_PAGE) < max_pics );
 }
 
 /**
- * This function reads lines from the file and search for the string "standard_resolution":
- * The "standard_resolution" string indicates that the url we want is on the next line.
+ * This function reads lines from the file and search for the string "low_resolution":
+ * The "low_resolution" string indicates that the url we want is on the next line.
  * @param pipefd[2] The pipe to read the JSON from
- * @return The array of strings that contain the urls
+ * @return The pagination url to next page of JSON with urls from the user's instagram feed
  */
-char** get_urls_from_JSON(int pipefd[2]) {
+char* get_urls_from_JSON(int pipefd[2]) {
+
+	char *rv = NULL;
 
 	/* Open the pipe for reading */
 	FILE *f = fdopen(pipefd[READ], "r");
-	char buffer[BUFSIZ], *pos = NULL;
 
 	/* Look for and save the pagination URL */
-	char *key = "\"next_url\":";
+	int save_url = 0;
+	char *pos = NULL, *key = "\"pagination\":", buffer[BUFSIZ];
 	while ( (fgets(buffer, BUFSIZ, f)) != NULL ) {
 
-		/* If the line has the string "next_url": in it then save the url */
-		if ( (pos = strstr(buffer, key)) != NULL ) {
+		printf("BUFR:%s", buffer);
 
-			/* Find the beginning of the url */
-			char *start = strstr(pos+strlen(key), "\"")+1;
+		/* If the save url flag was set (because the pagination line was read on the previous fgets) */
+		if (save_url) {
+			/* If we find the next_url substring, then extract the url */
+			char *key2 = "\"next_url\":";
+			if ( (pos = strstr(buffer ,key2)) != NULL ) {
 
-			/* Find the end of the url */
-			char *end = strstr(start, "\"");
+				/* Find the beginning of the url */
+				char *start = strchr(pos + strlen(key2), '\"') + 1;
 
-			/* NUL terminate the string start where the ending quote of the nex_url is */
-			*end = '\0';
+				/* Find the end of the url */
+				char *end = strchr(start, '\"');
 
-			/* String replace the unicode character for the ampersand */
-			pagination_url_GLOBAL = str_replace(start, "\\u0026", "&");
+				/* NUL terminate the string containing the url */
+				*end = '\0';
 
-			/* Remove all backslashes from the url */
-			remove_all_char(pagination_url_GLOBAL, '\\');
-		
-			/* Found the pagination url so exit the loop */
+				/* String replace the unicode character for the ampersand */
+				rv = str_replace(start, "\\u0026", "&");
+
+				/* Remove all backslashes from the url */
+				remove_all_char(rv, '\\');
+
+				printf("next_url:%s\n", rv);
+			}
+
+			/* Set the save_url back to false for use by the next while loop */
+			save_url = !save_url;
+
+			/* Exit this while loop; we are done looking for the pagination url */
 			break;
+
+		/* If the line has the string "pagination": in it then, set the save url to true */
+		} else if ( (pos = strstr(buffer, key)) != NULL ) {
+			/* Found the pagination url so save the url on the next run through the loop */
+			save_url = !save_url;
 		}
 	}
 
 	/* Read lines from the file, saving only the URL's we need into the char array */
-	int save_url = 0;
 	while ( (fgets(buffer, BUFSIZ, f)) != NULL ) {
 
-		/* If save_the_url flag is true, then parse the line for the url */
+		/* If save_url flag is true, then parse the line for the url */
 		if (save_url) {
 
 			/* Find the location right after the "url:" substring */
@@ -278,13 +292,13 @@ char** get_urls_from_JSON(int pipefd[2]) {
 
 		/* Or, if the line has the substring "standard_resolution": in it set the save_url flag */
 		} else if ( (pos = strstr(buffer, "\"low_resolution\":")) != NULL ) {
-			/* Set the save_the_url flag to true */
+			/* Set the save_url flag to true */
 			save_url = !save_url;
 		}
 	}
 
 	/* Return the array of urls */
-	return url_array_GLOBAL;
+	return rv;
 }
 
 /**
