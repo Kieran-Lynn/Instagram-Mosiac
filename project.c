@@ -77,10 +77,14 @@ int main(int argc, char *argv[]) {
 
 	/* Get the number of user images */
 	int pics_to_download = get_number_of_pics(user_id);
-	printf("Number of pics:%d\n", pics_to_download);
+	printf("Total number of pics available in feed:%d\n", pics_to_download);
 
 	/* Get the array of URL's into the global array of urls */
 	get_urls(user_id, pics_to_download);
+
+	// for (i = 0; i < num_urls_GLOBAL; i++) {
+	// 	printf("%s\n", url_array_GLOBAL[i]);
+	// }
 
 	/* Download the images  */
     pid_t url_pid[num_urls_GLOBAL];
@@ -183,22 +187,25 @@ void get_urls(char *user_id, int max_pics) {
 	snprintf(url, url_size, "%s%s%s%s%s", request_part1, user_id, request_part2, access_token_GLOBAL, "&count=2000");
 
 	/* If max pics is greater than 200 use 200 */
-	if (max_pics > 200)	max_pics = 200;
+	if (max_pics > 210)	max_pics = 210;
 
 	int NUM_URLS_PER_PAGE = 35;
 	do {
 		/* Create a curl command argument vector to be used for execv */
 		char *curl_command[] = { "curl", "--silent", url, NULL };
 
+		/* Execute the curl command, get back the url of the next page of JSON or NULL if no more  */
+		char *next_url = fork_stuff(curl_command, (void*) get_urls_from_JSON);
+
 		/* Free the dynamically allocated url string */
 		free(url);
 
-		/* Execute the curl command, get back the url of the next page of JSON or NULL if no more  */
-		url = fork_stuff(curl_command, (void*) get_urls_from_JSON);
+		/* Set url to the next_url */
+		url = next_url;
 
 		printf("Number of urls found: %d\n", num_urls_GLOBAL);
 
-	} while ( url != NULL && (num_urls_GLOBAL + NUM_URLS_PER_PAGE) < max_pics );
+	} while ( url != NULL && (num_urls_GLOBAL + NUM_URLS_PER_PAGE) <= max_pics );
 }
 
 /**
@@ -212,14 +219,15 @@ char* get_urls_from_JSON(int pipefd[2]) {
 	char *rv = NULL;
 
 	/* Open the pipe for reading */
-	FILE *f = fdopen(pipefd[READ], "r");
+	FILE *f;
+	if ( (f = fdopen(pipefd[READ], "r")) == NULL ) {
+		unix_error("Failed to open pipe in get_urls_from_JSON.");
+	}
 
 	/* Look for and save the pagination URL */
 	int save_url = 0;
 	char *pos = NULL, *key = "\"pagination\":", buffer[BUFSIZ];
 	while ( (fgets(buffer, BUFSIZ, f)) != NULL ) {
-
-		printf("BUFR:%s", buffer);
 
 		/* If the save url flag was set (because the pagination line was read on the previous fgets) */
 		if (save_url) {
@@ -241,8 +249,6 @@ char* get_urls_from_JSON(int pipefd[2]) {
 
 				/* Remove all backslashes from the url */
 				remove_all_char(rv, '\\');
-
-				printf("next_url:%s\n", rv);
 			}
 
 			/* Set the save_url back to false for use by the next while loop */
@@ -441,11 +447,8 @@ void* fork_stuff(char *curl_command[], void* (*do_stuff)(int pipefd[2])) {
 	/* Generic return Pointer */
 	void *rv = NULL;
 
-	int child_status;
-	int child_status2;
-
 	/* Declare file descriptors for the pipe file */
-	int curlfd[2], jsbfd[2], parsefd[2];
+	int curlfd[2], jsbfd[2];
 
 	/* Declare process id's to be used for the fork child processes */
 	pid_t curl_pid, jsb_pid, parse_pid;
@@ -510,14 +513,14 @@ void* fork_stuff(char *curl_command[], void* (*do_stuff)(int pipefd[2])) {
 			close(jsbfd[READ]);
 
 			/* Wait for and reap the child */
-			waitpid(jsb_pid, &child_status2, 0);
+			waitpid(jsb_pid, NULL, 0);
 		}
 
 		/* We are done reading from the pipe. Close it */
 		close(curlfd[READ]);
 
 		/* Wait for the child process to finish, and reap it */
-		waitpid(curl_pid, &child_status, 0);
+		waitpid(curl_pid, NULL, 0);
 	}
 
 	/* Return the result */

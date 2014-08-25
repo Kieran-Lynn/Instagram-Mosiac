@@ -1,5 +1,5 @@
 TARGET=project
-USER_NAME=Kierchon
+USER_NAME=philadelphiaeagles
 CC=gcc
 FLAGS=-I./src/ `pkg-config --cflags opencv` -fopenmp
 LIBS=-lm `pkg-config --libs opencv` -fopenmp 
@@ -31,4 +31,4 @@ lib/%.o: src/%.c
 	gcc $(FLAGS) -c $< -o $@
 
 hw4ex: 
-	make -f MakeHW4 
+	make -f HW4.make
